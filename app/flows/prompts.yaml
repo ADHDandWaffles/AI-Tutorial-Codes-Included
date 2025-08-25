@@ -1,0 +1,34 @@
+plan: |
+  Plan step-by-step to solve the user task.
+  Task: {task}
+  Return JSON only: {"subtasks":["..."],"tools":{"search":true/false,"math":true/false},"success_criteria":["..."]}
+
+route: |
+  You are a router. Decide next node.
+  Context scratch (last 3): {last_scratch}
+  If math needed -> 'math'; if research needed -> 'research'; if ready -> 'write'.
+  Return one token from [research, math, write].
+  Task: {task}
+
+research: |
+  Generate 3 focused search queries for:
+  Task: {task}
+  Return as a JSON list of strings.
+
+math: |
+  Extract a single arithmetic expression from this task:
+  {task}
+
+write: |
+  Write the final answer.
+  Task: {task}
+  Use the evidence and any math results below, cite inline like [1],[2].
+  Evidence: {evidence}
+  Notes: {notes}
+  Return a concise, structured answer.
+
+critic: |
+  Critique and improve the answer for factuality, missing steps, and clarity.
+  If fix needed, return improved answer. Else return 'OK'.
+  Answer: {result}
+  Criteria: {plan}
