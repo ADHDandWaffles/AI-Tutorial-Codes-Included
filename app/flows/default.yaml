@@ -1,0 +1,43 @@
+# Default GraphAgent workflow
+nodes:
+  - id: plan
+    type: llm
+    description: "Plan the steps, tools, and success criteria."
+  - id: route
+    type: decision
+    description: "Decide the next node: research, math, or write."
+  - id: research
+    type: tool
+    description: "Generate queries and call the RAG system."
+  - id: math
+    type: tool
+    description: "Extract and safely evaluate a math expression."
+  - id: write
+    type: llm
+    description: "Write a structured draft answer using evidence and math."
+  - id: critic
+    type: llm
+    description: "Review and improve the draft answer."
+  - id: end
+    type: terminal
+    description: "Workflow complete."
+
+edges:
+  - from: start
+    to: plan
+  - from: plan
+    to: route
+  - from: route
+    to: research
+  - from: route
+    to: math
+  - from: route
+    to: write
+  - from: research
+    to: route
+  - from: math
+    to: route
+  - from: write
+    to: critic
+  - from: critic
+    to: end
