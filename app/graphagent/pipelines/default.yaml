@@ -1,0 +1,9 @@
+start: plan
+end: end
+edges:
+  plan: [route]
+  route: [research, math, write]
+  research: [route]
+  math: [route]
+  write: [critic]
+  critic: [end]

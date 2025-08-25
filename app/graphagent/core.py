@@ -1,12 +1,19 @@
+# app/graphagent/core.py
 from __future__ import annotations
 import ast, json, math
 from dataclasses import dataclass, field
 from typing import List, Dict, Callable, Any
 from .llm_client import call_llm
 from .rag_integration import search_docs
+from .registry import register_node
 
 # --- math sandbox ---
 def safe_eval_math(expr: str) -> str:
+    """
+    @node: math_sandbox
+    Safely evaluate a simple arithmetic expression (no names/calls).
+    @next: route
+    """
     node = ast.parse(expr, mode="eval")
     allowed = (
         ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
@@ -22,6 +29,11 @@ def safe_eval_math(expr: str) -> str:
 # --- agent state ---
 @dataclass
 class State:
+    """
+    @node: state
+    Lightweight state container passed between nodes.
+    @next: plan
+    """
     task: str
     plan: str = ""
     scratch: List[str] = field(default_factory=list)
@@ -31,7 +43,13 @@ class State:
     done: bool = False
 
 # --- nodes ---
+@register_node("plan")
 def node_plan(state: State) -> str:
+    """
+    @node: plan
+    Plan the approach; output JSON of subtasks + tool flags.
+    @next: route
+    """
     prompt = f"""Plan step-by-step to solve the user task.
 Task: {state.task}
 Return JSON only: {{"subtasks":["..."],"tools":{{"search":true/false,"math":true/false}},"success_criteria":["..."]}}"""
@@ -44,21 +62,42 @@ Return JSON only: {{"subtasks":["..."],"tools":{{"search":true/false,"math":true
     state.scratch.append("PLAN:\n"+state.plan)
     return "route"
 
+@register_node("route")
 def node_route(state: State) -> str:
+    """
+    @node: route
+    Decide next step based on scratch/evidence.
+    @next: research|math|write
+    """
     prompt = f"""You are a router. Decide next node.
 Context scratch (last 3):\n{chr(10).join(state.scratch[-3:])}
 If math needed -> 'math'; if research needed -> 'research'; if ready -> 'write'.
 Return one token from [research, math, write].
 Task: {state.task}"""
     choice = (call_llm(prompt) or "").lower()
+
     if "math" in choice and any(ch.isdigit() for ch in state.task):
         return "math"
-    if "research" in choice or not state.evidence:
+
+    if "research" in choice:
+        recent_scratch = "\n".join(state.scratch[-4:])
+        if "[RAG_ERROR]" in recent_scratch:
+            return "write"
+        if not state.evidence:
+            return "research"
+        return "write"
+
+    if not state.evidence:
         return "research"
     return "write"
 
+@register_node("research")
 def node_research(state: State) -> str:
-    # Ask LLM for focused search queries, then call central RAG
+    """
+    @node: research
+    Generate search queries and fetch evidence from RAG; de-dupe.
+    @next: route
+    """
     prompt = f"""Generate 3 focused search queries for:
 Task: {state.task}
 Return as a JSON list of strings."""
@@ -71,7 +110,6 @@ Return as a JSON list of strings."""
     hits = []
     for q in queries:
         hits.extend(search_docs(q, k=2))
-    # de-dup preserving order
     seen = set(); uniq = []
     for h in hits:
         if h not in seen:
@@ -80,7 +118,13 @@ Return as a JSON list of strings."""
     state.scratch.append("EVIDENCE:\n- " + "\n- ".join(uniq[:6]))
     return "route"
 
+@register_node("math")
 def node_math(state: State) -> str:
+    """
+    @node: math
+    Extract and safely evaluate one arithmetic expression.
+    @next: route
+    """
     prompt = "Extract a single arithmetic expression from this task:\n"+state.task
     expr = call_llm(prompt)
     expr = "".join(ch for ch in expr if ch in "0123456789+-*/().%^ ")
@@ -91,10 +135,25 @@ def node_math(state: State) -> str:
         state.scratch.append(f"MATH-ERROR: {expr} ({e})")
     return "route"
 
+@register_node("write")
 def node_write(state: State) -> str:
+    """
+    @node: write
+    Draft the final answer using evidence and notes; if no RAG evidence, preface that it uses model knowledge.
+    @next: critic
+    """
+    has_real_evidence = any(e and not str(e).startswith("[RAG_ERROR]") for e in state.evidence)
+
+    preface = ""
+    if not has_real_evidence:
+        preface = (
+            "Note: The local RAG index returned no documents for this query. "
+            "The following answer is based on general model knowledge and may require verification.\n\n"
+        )
+
     prompt = f"""Write the final answer.
-Task: {state.task}
-Use the evidence and any math results below, cite inline like [1],[2].
+{preface}Task: {state.task}
+Use the evidence and any math results below, cite inline like [1],[2] when evidence exists.
 Evidence:\n{chr(10).join(f'[{i+1}] '+e for i,e in enumerate(state.evidence[:8]))}
 Notes:\n{chr(10).join(state.scratch[-5:])}
 Return a concise, structured answer."""
@@ -103,7 +162,13 @@ Return a concise, structured answer."""
     state.scratch.append("DRAFT:\n"+state.result)
     return "critic"
 
+@register_node("critic")
 def node_critic(state: State) -> str:
+    """
+    @node: critic
+    Improve/verify the draft for clarity and factuality; finish.
+    @next: end
+    """
     prompt = f"""Critique and improve the answer for factuality, missing steps, and clarity.
 If fix needed, return improved answer. Else return 'OK'.
 Answer:\n{state.result}\nCriteria:\n{state.plan}"""
@@ -120,6 +185,11 @@ NODES: Dict[str, Callable[[State], str]] = {
 }
 
 def run_graph(task: str) -> State:
+    """
+    @node: runner
+    Orchestrate node execution until 'end' or max steps.
+    @next: end
+    """
     state = State(task=task)
     cur = "plan"
     max_steps = 12
@@ -131,4 +201,9 @@ def run_graph(task: str) -> State:
     return state
 
 def ascii_graph() -> str:
+    """
+    @node: ascii_graph
+    Simple ASCII summary of the flow.
+    @next: end
+    """
     return "START -> plan -> route -> (research <-> route) & (math <-> route) -> write -> critic -> END"

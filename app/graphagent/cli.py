@@ -1,64 +1,33 @@
-# app/cli.py
+# app/graphagent/cli.py
+from __future__ import annotations
+import argparse, time
+from .pipeline import load_pipeline, run_pipeline, ascii_from_spec
+from .profile import apply_profile
 
-import os, sys, argparse, time
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--task", type=str, default="")
+    ap.add_argument("--pipeline", type=str, default="default")
+    ap.add_argument("--profile", type=str, default="default")
+    args = ap.parse_args()
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="GraphAgent CLI")
-    parser.add_argument("--task", type=str, default=None, help="Task text. If omitted, you will be prompted.")
-    parser.add_argument("--interactive", action="store_true",
-                        help="Force interactive prompt loop (ask repeatedly until blank).")
-    parser.add_argument("--model", type=str, default=os.getenv("LLM_MODEL", "qwen/qwen2.5-vl-7b"))
-    parser.add_argument("--endpoint", type=str, default=os.getenv("LLM_ENDPOINT", "http://127.0.0.1:1234/v1"))
-    args = parser.parse_args(argv)
+    apply_profile(args.profile)
+    spec = load_pipeline(args.pipeline)
 
-    # ---- import your core runner (adjust the import path to match your project) ----
-    # Example if you put it under app/core.py:
-    try:
-        from app.core import run_graph   # <-- change if your function lives elsewhere
-    except Exception:
-        # Fallbacks you may have:
-        try:
-            from graphagent.core import run_graph  # if you named the package differently
-        except Exception as e:
-            print(f"[ERROR] Couldn't import run_graph: {e}", file=sys.stderr)
-            return 1
+    task = args.task.strip() or input("Enter your task: ").strip() or "Compare xeriscape vs turf; compute 5*7"
+    t0 = time.time()
+    state = run_pipeline(task, spec)
+    dt = time.time() - t0
 
-    # Make endpoint/model available to your core if it reads env vars
-    os.environ["LLM_ENDPOINT"] = args.endpoint
-    os.environ["LLM_MODEL"] = args.model
-
-    def handle_one(task_text: str):
-        print(f"Model: {args.model}")
-        print(f"Task: {task_text}\n")
-        t0 = time.time()
-        state = run_graph(task_text)  # your core function should not require an API key now
-        dt = time.time() - t0
-        print("\n=== GRAPH === START -> plan -> route -> (research <-> route) & (math <-> route) -> write -> critic -> END\n")
-        print(f"✅ Result in {dt:.2f}s:\n{state.result or '(no result)'}\n")
-        print("---- Evidence ----")
-        for e in state.evidence:
-            print(e)
-        print("\n---- Scratch (last 5) ----")
-        for line in state.scratch[-5:]:
-            print(line)
-
-    # Interactive mode (explicit or no task provided)
-    if args.interactive or not args.task:
-        print("GraphAgent interactive mode. Press ENTER on an empty line to quit.\n")
-        while True:
-            try:
-                task = input("📝 Enter your task: ").strip()
-            except EOFError:
-                break
-            if not task:
-                break
-            handle_one(task)
-            print("\n" + "-"*60 + "\n")
-        return 0
-
-    # Single one-shot
-    handle_one(args.task)
-    return 0
+    print("\n=== GRAPH ===")
+    print(ascii_from_spec(spec))
+    print(f"\n✅ Result in {dt:.2f}s:\n{state.result}\n")
+    print("---- Evidence ----")
+    for e in state.evidence:
+        print(e)
+    print("\n---- Scratch (last 5) ----")
+    for s in state.scratch[-5:]:
+        print(s)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

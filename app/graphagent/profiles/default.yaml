@@ -1,0 +1,2 @@
+llm_endpoint: "http://127.0.0.1:1234/v1"
+llm_model: "qwen/qwen2.5-vl-7b"

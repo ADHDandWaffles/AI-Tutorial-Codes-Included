@@ -1,0 +1,6 @@
+start: tx_load
+end: end
+edges:
+  tx_load: [tx_classify]
+  tx_classify: [tx_write]
+  tx_write: [end]
