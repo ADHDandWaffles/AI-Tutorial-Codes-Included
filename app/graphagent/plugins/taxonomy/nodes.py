@@ -30,3 +30,4 @@ Input JSON:
 Return a concise paragraph."""
     state.result = (call_llm(prompt) or "").strip()
     return "end"
+

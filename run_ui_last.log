@@ -1,0 +1,16 @@
+[Tue 08/26/2025 16:18:19.35] Starting Run_Mini_UI.bat 
+Repo: C:\Users\gmoores\AI-Tutorial-Codes-Included 
+Script: C:\Users\gmoores\AI-Tutorial-Codes-Included\app\Run_Mini_UI.bat 
+C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Scripts\python.exe
+C:\Users\gmoores\AppData\Local\Programs\Python\Python313\python.exe
+PY: C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Scripts\python.exe
+Traceback (most recent call last):
+  File "<frozen runpy>", line 189, in _run_module_as_main
+  File "<frozen runpy>", line 159, in _get_module_details
+  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "C:\Users\gmoores\AI-Tutorial-Codes-Included\app\graphagent\mini_ui.py", line 80
+    def do_search_and_answer(...):
+                             ^^^
+SyntaxError: invalid syntax

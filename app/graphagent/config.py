@@ -12,3 +12,4 @@ MAX_TOKENS  = int(os.environ.get("LOCAL_LLM_MAX_TOKENS", "800"))
 # RAG defaults
 VECTOR_ROOT = os.environ.get("VECTOR_ROOT", r"C:\Users\gmoores\Desktop\AI\RAG")
 TOP_K       = int(os.environ.get("RAG_TOP_K", "4"))
+

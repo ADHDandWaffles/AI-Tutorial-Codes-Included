@@ -63,3 +63,4 @@ if __name__ == "__main__":
     state = runner.run("Compare xeriscaping vs. traditional lawns in Colorado; compute 5*7")
     print("Result:", state.result)
     print("\nScratch (last 3):", state.scratch[-3:])
+

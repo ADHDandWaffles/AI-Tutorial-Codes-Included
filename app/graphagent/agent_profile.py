@@ -14,3 +14,4 @@ def apply_profile(name: str | None):
         os.environ["LLM_ENDPOINT"] = ep
     if model := cfg.get("llm_model"):
         os.environ["LLM_MODEL"] = model
+

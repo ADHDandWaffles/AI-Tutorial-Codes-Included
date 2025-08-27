@@ -35,3 +35,4 @@ def call_llm(prompt: str, temperature: float | None = None, system: str | None =
             prompt=(f"[SYSTEM]\n{system}\n\n[USER]\n{prompt}" if system else prompt),
         )
         return (resp.choices[0].text or "").strip()
+

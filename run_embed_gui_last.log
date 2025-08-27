@@ -1,0 +1,22 @@
+[Tue 08/26/2025 16:01:04.81] Starting Create_Chroma_Collections_GUI.bat 
+Repo: C:\Users\gmoores\AI-Tutorial-Codes-Included 
+RAG_HOME: C:\Users\gmoores\Desktop\AI\RAG 
+Script: C:\Users\gmoores\AI-Tutorial-Codes-Included\app\Run_Create_Chroma_Collections_GUI.bat 
+C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Scripts\python.exe
+C:\Users\gmoores\AppData\Local\Programs\Python\Python313\python.exe
+PY: C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Scripts\python.exe
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\gmoores\AI-Tutorial-Codes-Included\app\graphagent\create_chroma_collections_gui.py", line 404, in <module>
+    ui = build_ui()
+  File "C:\Users\gmoores\AI-Tutorial-Codes-Included\app\graphagent\create_chroma_collections_gui.py", line 398, in build_ui
+    demo.load(list_collections, inputs=[DEFAULT_DB_DIR, DEFAULT_BASE], outputs=[table])
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Lib\site-packages\gradio\events.py", line 737, in event_trigger
+    return Dependency(block, dep.get_config(), dep_index, fn)
+                             ~~~~~~~~~~~~~~^^
+  File "C:\Users\gmoores\AI-Tutorial-Codes-Included\venv\Lib\site-packages\gradio\blocks.py", line 661, in get_config
+    "inputs": [block._id for block in self.inputs],
+               ^^^^^^^^^
+AttributeError: 'str' object has no attribute '_id'

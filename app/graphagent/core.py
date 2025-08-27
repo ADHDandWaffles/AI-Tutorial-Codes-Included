@@ -1,11 +1,13 @@
 # app/graphagent/core.py
 from __future__ import annotations
-import ast, json
-from dataclasses import dataclass, field
-from typing import List, Dict, Callable
-from .llm_client import call_llm
-from .rag_integration import search_docs
 
+import ast, json, os
+from dataclasses import dataclass, field
+from typing import List, Dict, Callable, Any
+
+from .llm_client import call_llm
+# Use the module so we can call the newer, named-arg interface.
+from . import rag_integration
 
 # --- math sandbox ---
 def safe_eval_math(expr: str) -> str:
@@ -68,6 +70,57 @@ Task: {state.task}"""
     return "write"
 
 
+def _env_bool(name: str, default: bool = True) -> bool:
+    v = os.environ.get(name, "")
+    if v == "":
+        return default
+    return v.lower() in ("1", "true", "yes", "y", "on")
+
+
+def _collect_rag_hits(query: str, limit_per_query: int = 2) -> List[str]:
+    """
+    Call rag_integration.search_docs(...) with the modern interface and convert
+    results into simple evidence strings suitable for the writer.
+    """
+    profile   = os.environ.get("RAG_UI_PROFILE") or "default"
+    recall_k  = int(os.environ.get("RAG_UI_RECALL_K", "40"))
+    rerank_k  = int(os.environ.get("RAG_UI_RERANK_K", "12"))
+    context_k = int(os.environ.get("RAG_UI_CONTEXT_K", "8"))
+    use_rerank = _env_bool("RAG_UI_RERANK", True)
+
+    try:
+        out = rag_integration.search_docs(
+            query=query,
+            profile=profile,
+            recall_k=recall_k,
+            rerank_k=rerank_k,
+            context_k=context_k,
+            rerank=use_rerank,
+        )
+    except TypeError:
+        # Fallback: if a different signature is present, try a minimal call
+        out = rag_integration.search_docs(query=query, profile=profile)
+
+    # Normalize: dict with "results" or plain list
+    if isinstance(out, dict):
+        results = out.get("results", []) or []
+    else:
+        results = out or []
+
+    ev: List[str] = []
+    for r in results[:max(0, limit_per_query)]:
+        if isinstance(r, dict):
+            url = (r.get("canonical_url") or "").strip()
+            title = (r.get("title") or url or "Result").strip()
+            text = (r.get("text") or "").replace("\n", " ").strip()
+            snippet = ((" :: " + text[:240] + "…") if text else "")
+            ev.append(f"{title} — {url}{snippet}".strip(" —"))
+        else:
+            # If the connector returned raw strings
+            ev.append(str(r))
+    return ev
+
+
 def node_research(state: State) -> str:
     prompt = f"""Generate 3 focused search queries for:
 Task: {state.task}
@@ -78,16 +131,21 @@ Return as a JSON list of strings."""
     except Exception:
         queries = [state.task, "background " + state.task, "pros cons " + state.task]
 
-    hits = []
+    hits: List[str] = []
     for q in queries:
-        hits.extend(search_docs(q, k=2))
+        try:
+            hits.extend(_collect_rag_hits(q, limit_per_query=2))
+        except Exception as e:
+            hits.append(f"[RAG_ERROR] {q}: {e}")
 
+    # Dedup while preserving order
     seen = set()
-    uniq = []
+    uniq: List[str] = []
     for h in hits:
         if h not in seen:
             seen.add(h)
             uniq.append(h)
+
     state.evidence.extend(uniq)
     state.scratch.append("EVIDENCE:\n- " + "\n- ".join(uniq[:6]))
     return "route"

@@ -1,27 +1,26 @@
 # app/graphagent/rag_integration.py
-import sys
-from pathlib import Path
+import os, sys
+RAG_HOME = os.environ.get("RAG_HOME", r"C:\Users\gmoores\Desktop\AI\RAG")
+if RAG_HOME and RAG_HOME not in sys.path:
+    sys.path.insert(0, RAG_HOME)
 
-# Path to your rag_core folder
-RAG_CORE = Path(r"C:\Users\gmoores\Desktop\AI\RAG\rag_core")
-if str(RAG_CORE) not in sys.path:
-    sys.path.append(str(RAG_CORE))
+from typing import Dict, Any
+from rag_core import query_rag_system
 
-try:
-    from query_rag_system import query_rag_system
-except ImportError as e:
-    def query_rag_system(query: str, top_k: int = 5):
-        return [f"[RAG_ERROR] query_rag_system not importable from: {RAG_CORE}"]
-
-def search_docs(query: str, k: int = 5):
-    """
-    Wrapper for GraphAgent node_research calls.
-    Returns top-k chunks from the RAG system.
-    """
-    try:
-        hits = query_rag_system(query, top_k=k)
-        if not hits:
-            return [f"[RAG_EMPTY] No results for query: {query}"]
-        return hits
-    except Exception as e:
-        return [f"[RAG_EXCEPTION] {e}"]
+def search_docs(
+    query: str,
+    profile: str,
+    recall_k: int,
+    rerank_k: int,
+    context_k: int,
+    rerank: bool = True,
+) -> Dict[str, Any]:
+    """Thin shim around rag_core.query_rag_system.search."""
+    return query_rag_system.search(
+        query=query,
+        profile=profile,
+        recall_k=recall_k,
+        rerank_k=rerank_k,
+        context_k=context_k,
+        rerank=rerank,
+    )

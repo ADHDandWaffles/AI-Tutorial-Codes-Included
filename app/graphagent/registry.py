@@ -9,3 +9,4 @@ def register_node(name: str):
         NODE_REGISTRY[name] = fn
         return fn
     return deco
+
