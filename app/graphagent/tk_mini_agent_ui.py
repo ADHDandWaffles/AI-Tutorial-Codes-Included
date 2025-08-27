@@ -1,13 +1,11 @@
 # app/graphagent/tk_mini_agent_ui.py
 from __future__ import annotations
 
-import os, sys, threading, webbrowser, subprocess, json, traceback
+import os, sys, threading, webbrowser, subprocess, json, traceback, re
 from typing import Dict, Any, List, Tuple
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-
-import re
 
 # Debug: confirm we’re running the right file
 print("[Tk UI] Using file:", __file__)
@@ -91,15 +89,28 @@ class AgentUI(tk.Tk):
         pan = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         pan.pack(expand=True, fill=tk.BOTH, padx=8, pady=8)
 
-        # Left: Agent Answer
+        # Left: Tabbed agent output
         left = ttk.Frame(pan)
         pan.add(left, weight=3)
-        ttk.Label(left, text="Agent Answer (click superscripts to view passages):").pack(anchor="w")
-        self.answer_txt = tk.Text(left, wrap="word")
-        self.answer_txt.pack(expand=True, fill=tk.BOTH)
+        ttk.Label(left, text="Agent Output").pack(anchor="w")
+
+        self.nb = ttk.Notebook(left)
+        self.nb.pack(expand=True, fill=tk.BOTH)
+
+        self.answer_txt = tk.Text(self.nb, wrap="word")
+        self.nb.add(self.answer_txt, text="Answer")
         self.answer_txt.tag_configure("link", foreground="blue", underline=True)
         # Not strictly needed, but harmless. Real clicks handled by tag bindings.
         self.answer_txt.bind("<Button-1>", self._maybe_click_superscript)
+
+        self.graph_txt = tk.Text(self.nb, wrap="none")
+        self.nb.add(self.graph_txt, text="Graph")
+
+        self.evidence_txt = tk.Text(self.nb, wrap="word")
+        self.nb.add(self.evidence_txt, text="Evidence")
+
+        self.scratch_txt = tk.Text(self.nb, wrap="word")
+        self.nb.add(self.scratch_txt, text="Scratch")
 
         # Right: Tier-2 passages
         right = ttk.Frame(pan)
@@ -118,15 +129,41 @@ class AgentUI(tk.Tk):
         self._num_to_url_title: Dict[int, Tuple[str, str]] = {}   # n -> (url, title)
         self._url_to_ctx: Dict[str, List[Dict[str, Any]]] = {}    # url -> [chunks]
 
+        # Storage for structured CLI parts (JSON)
+        self._last_graph_text = ""
+        self._last_evidence_list: List[str] = []
+        self._last_scratch_list: List[str] = []
+
         # Boot
         self.refresh_profiles()
 
+    # ---------- Helpers ----------
+    def _unescape_regex_text(self, s: str) -> str:
+        """Remove stray backslashes before punctuation (e.g., '\.' '\-')."""
+        return re.sub(r'\\([.*+?^${}()|\[\]\\/\\-])', r'\1', s)
+
+    def _parse_evidence_list(self, ev_list: List[str]) -> Dict[int, Tuple[str, str]]:
+        """
+        Build {1: (url,title), ...} from evidence item strings like:
+          "Title — https://example.com :: snippet…"
+        """
+        out: Dict[int, Tuple[str, str]] = {}
+        n = 1
+        for ln in ev_list:
+            s = (ln or "").strip()
+            if not s:
+                continue
+            m = re.search(r"(https?://\S+)", s)
+            url = m.group(1) if m else ""
+            title = s.split(" — ", 1)[0].strip() if " — " in s else (url or "Source")
+            if url:
+                out[n] = (url, title)
+                n += 1
+        return out
+
     def _extract_evidence_citations(self, answer_text: str) -> Dict[int, Tuple[str, str]]:
         """
-        Parse the CLI's '---- Evidence ----' section to build a 1-based map:
-        { 1: (url, title), 2: (...), ... }
-        Lines look like:
-          Title — https://example.com :: snippet...
+        Legacy fallback: parse the CLI's '---- Evidence ----' block in the Answer text.
         """
         lines = answer_text.splitlines()
         try:
@@ -134,27 +171,15 @@ class AgentUI(tk.Tk):
         except ValueError:
             return {}
 
-        evidence_lines: List[str] = []
+        ev_lines: List[str] = []
         for ln in lines[start:]:
             s = ln.strip()
             # Stop at next block header or empty separator
             if not s or s.startswith("---- "):
                 break
-            evidence_lines.append(s)
+            ev_lines.append(s)
 
-        out: Dict[int, Tuple[str, str]] = {}
-        n = 1
-        for ln in evidence_lines:
-            # Pull URL
-            m = re.search(r"(https?://\S+)", ln)
-            url = m.group(1) if m else ""
-            # Title is before ' — ' if present
-            title = ln.split(" — ", 1)[0].strip() if " — " in ln else (url or "Source")
-            if url:
-                out[n] = (url, title)
-                n += 1
-        return out
-
+        return self._parse_evidence_list(ev_lines)
 
     # ---- Profile discovery ----
     def refresh_profiles(self):
@@ -222,12 +247,11 @@ class AgentUI(tk.Tk):
             self._ui_error(f"Retrieval failed:\n{e}\n\n{tb}")
             return
 
-        # 2) Run the real Agent Pipeline via CLI (node graph), capture stdout as answer_text
+        # 2) Run the real Agent Pipeline via CLI (node graph), capture stdout as JSON or text
         try:
             from pathlib import Path
             import tempfile, datetime
 
-            # --- Child process env -------------------------------------------------
             env = os.environ.copy()
             # knobs for CLI (optional; your CLI can read these if desired)
             env["RAG_UI_PROFILE"]   = profile
@@ -235,16 +259,14 @@ class AgentUI(tk.Tk):
             env["RAG_UI_RERANK_K"]  = str(rerank_k)
             env["RAG_UI_CONTEXT_K"] = str(context_k)
             env["RAG_UI_RERANK"]    = "1" if use_rerank else "0"
-
+            # Request structured JSON from CLI
+            env["RAG_UI_JSON"] = "1"
             # Force UTF-8 to avoid Windows cp1252 crashes on emojis/special chars
             env["PYTHONIOENCODING"] = "utf-8"
 
-            # Repo root (folder that contains the "app" package)
             repo_root = Path(__file__).resolve().parents[2]
-            # External RAG package home
             rag_home  = os.environ.get("RAG_HOME", r"C:\Users\gmoores\Desktop\AI\RAG")
 
-            # Ensure both roots are importable by the child interpreter
             extra_paths = [str(repo_root)]
             if rag_home:
                 extra_paths.append(rag_home)
@@ -252,20 +274,18 @@ class AgentUI(tk.Tk):
             existing_pp = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = os.pathsep.join([p for p in (os.pathsep.join(extra_paths), existing_pp) if p])
 
-            # --- Launch CLI as module ---------------------------------------------
             cmd = [sys.executable, "-m", "app.graphagent.cli", "--task", query]
             proc = subprocess.run(
                 cmd,
                 env=env,
                 cwd=str(repo_root),
                 capture_output=True,
-                text=True,        # decode to str
-                encoding="utf-8", # be explicit about decoding
-                errors="replace", # never crash on weird bytes
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
 
             if proc.returncode != 0:
-                # Write a copy/paste-able log and open it in Notepad
                 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 log_path = Path(tempfile.gettempdir()) / f"agent_cli_error_{ts}.log"
                 with open(log_path, "w", encoding="utf-8") as f:
@@ -276,14 +296,27 @@ class AgentUI(tk.Tk):
                     f.write("---- STDOUT ----\n" + (proc.stdout or "") + "\n\n")
                     f.write("---- STDERR ----\n" + (proc.stderr or "") + "\n")
                 try:
-                    os.startfile(str(log_path))  # Open in Notepad on Windows
+                    os.startfile(str(log_path))
                 except Exception:
                     pass
                 raise RuntimeError(f"Agent CLI returned non-zero exit code. Log: {log_path}")
 
-            # Heuristic: last non-empty chunk of stdout is the answer
-            stdout = (proc.stdout or "").strip()
-            answer_text = self._pick_answer_from_stdout(stdout)
+            # Prefer JSON
+            answer_text = ""
+            self._last_graph_text = ""
+            self._last_evidence_list = []
+            self._last_scratch_list = []
+            try:
+                data = json.loads(proc.stdout)
+                answer_text = data.get("result", "") or ""
+                self._last_graph_text = data.get("graph", "") or ""
+                self._last_evidence_list = data.get("evidence", []) or []
+                self._last_scratch_list = data.get("scratch", []) or []
+            except Exception:
+                # Legacy fallback
+                stdout = (proc.stdout or "").strip()
+                answer_text = self._pick_answer_from_stdout(stdout)
+                # Optional: you could parse legacy graph/evidence/scratch here if needed
 
         except Exception as e:
             tb = traceback.format_exc()
@@ -305,12 +338,22 @@ class AgentUI(tk.Tk):
 
     # ---- Build the visual result panes ----
     def _update_ui(self, answer_text: str, ctx: List[Dict[str, Any]], citations: Dict[str, Tuple[int, str]]):
+        # Clear all tabs
         self.answer_txt.delete("1.0", "end")
+        self.graph_txt.delete("1.0", "end")
+        self.evidence_txt.delete("1.0", "end")
+        self.scratch_txt.delete("1.0", "end")
+
         self._num_to_url_title.clear()
         self._url_to_ctx.clear()
 
-        # 0) Prefer the CLI's "Evidence" ordering (matches [1],[2],...)
-        ev_map = self._extract_evidence_citations(answer_text)  # Dict[int, (url, title)]
+        # 0) Build Number→(url,title) from structured evidence if present
+        ev_map: Dict[int, Tuple[str, str]] = {}
+        if self._last_evidence_list:
+            ev_map = self._parse_evidence_list(self._last_evidence_list)
+        else:
+            # Legacy fallback: parse from text block
+            ev_map = self._extract_evidence_citations(answer_text)
 
         # 1) Build url -> chunks map from ctx regardless
         for c in ctx:
@@ -320,11 +363,10 @@ class AgentUI(tk.Tk):
             self._url_to_ctx.setdefault(url, []).append(c)
 
         # 2) Number→(url,title) mapping:
-        #    - If Evidence block exists, use it (keeps [n] aligned).
-        #    - Else fall back to citations from rag_integration.search_docs.
         if ev_map:
             self._num_to_url_title.update(ev_map)
         else:
+            # fall back to citations returned from rag_integration
             for url, (n, title) in sorted(citations.items(), key=lambda x: x[1][0]):
                 self._num_to_url_title[n] = (url, title or url)
 
@@ -334,7 +376,15 @@ class AgentUI(tk.Tk):
         # 4) Make [n]/¹ clickable
         self._tag_superscripts()
 
-        # 5) If the agent answer does NOT include a 'sources' section, append one
+        # 5) Populate other tabs from structured JSON (if any)
+        if self._last_graph_text:
+            self.graph_txt.insert("end", self._last_graph_text)
+        if self._last_evidence_list:
+            self.evidence_txt.insert("end", "\n".join(self._last_evidence_list))
+        if self._last_scratch_list:
+            self.scratch_txt.insert("end", "\n".join(self._last_scratch_list))
+
+        # 6) If the agent answer does NOT include a 'sources' section, append one
         if "sources" not in answer_text.lower() and self._num_to_url_title:
             self.answer_txt.insert("end", "—" * 20 + "\nSources:\n")
             for n in sorted(self._num_to_url_title.keys()):
@@ -355,7 +405,7 @@ class AgentUI(tk.Tk):
                     self.answer_txt.tag_config(tag, foreground="blue", underline=True)
                     self.answer_txt.tag_bind(tag, "<Button-1>", lambda _e, u=url: webbrowser.open(u))
 
-        # 6) Fill Tier-2 table
+        # 7) Fill Tier-2 table
         for row in self.tree.get_children():
             self.tree.delete(row)
         for i, c in enumerate(ctx, 1):
@@ -365,7 +415,6 @@ class AgentUI(tk.Tk):
             sup_no = None
             # If we have an Evidence-derived number, use it; else try citations map
             if url:
-                # Find number assigned to this URL (reverse-lookup)
                 found_num = None
                 for n, (u, _t) in self._num_to_url_title.items():
                     if u == url:
@@ -380,7 +429,6 @@ class AgentUI(tk.Tk):
 
         self.status_var.set("Done.")
         self.run_btn.config(state=tk.NORMAL)
-
 
     def _tag_superscripts(self):
         """
@@ -415,7 +463,6 @@ class AgentUI(tk.Tk):
                 self.answer_txt.tag_config(tag, foreground="blue")
                 self.answer_txt.tag_bind(tag, "<Button-1>", lambda _e, nn=n: self._open_passage_dialog_for_num(nn))
 
-
     def _open_passage_dialog_for_num(self, n: int):
         url, title = self._num_to_url_title.get(n, ("", ""))
         chunks = self._url_to_ctx.get(url, [])
@@ -424,20 +471,21 @@ class AgentUI(tk.Tk):
         top = tk.Toplevel(self)
         top.title(f"[{n}] {title}")
         top.geometry("900x600")
-        # Header with clickable title
+
+        # Header with clickable title only (no raw URL)
         hf = ttk.Frame(top, padding=8)
         hf.pack(side=tk.TOP, fill=tk.X)
         tlabel = ttk.Label(hf, text=f"[{n}] {title}", foreground="blue", cursor="hand2")
         tlabel.pack(side=tk.LEFT)
         tlabel.bind("<Button-1>", lambda _e, u=url: webbrowser.open(u))
-        ttk.Label(hf, text=f" ({url})").pack(side=tk.LEFT)
 
-        # Body with all matched chunks
+        # Body with all matched chunks (unescape stray regex escapes)
         body = tk.Text(top, wrap="word")
         body.pack(expand=True, fill=tk.BOTH)
         for i, c in enumerate(chunks, 1):
-            body.insert("end", f"\n— Passage {i} —\n")
-            body.insert("end", c.get("text", "") + "\n")
+            raw = c.get("text", "") or ""
+            text = self._unescape_regex_text(raw)
+            body.insert("end", f"\n— Passage {i} —\n{text}\n")
 
         # Buttons
         bf = ttk.Frame(top, padding=8)
